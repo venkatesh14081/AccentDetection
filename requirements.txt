@@ -1,11 +1,16 @@
 streamlit
+streamlit-webrtc
+sounddevice
 numpy
 scipy
 matplotlib
 joblib
 librosa
+resampy
+soundfile
+audioread
 fuzzywuzzy
 python-Levenshtein
 transformers
-torch==2.0.0
+torch
 openai-whisper
