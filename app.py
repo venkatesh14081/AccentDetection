@@ -23,7 +23,7 @@ except:
 
 # ===== WEBRTC =====
 try:
-    from streamlit_webrtc import webrtc_streamer, WebRtcMode
+    from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
     WEBRTC = True
 except:
     WEBRTC = False
@@ -36,8 +36,7 @@ def is_audio_too_quiet(audio_path, threshold=0.01):
         y, sr = sf.read(audio_path)
         if len(y.shape) > 1:
             y = y[:, 0]
-        rms = np.sqrt(np.mean(y**2))
-        return rms < threshold
+        return np.sqrt(np.mean(y**2)) < threshold
     except:
         return False
 
@@ -52,17 +51,44 @@ if "accent" not in st.session_state:
 # ================= CONFIG =================
 st.set_page_config(page_title="Accent Coach", page_icon="🎧", layout="wide")
 
-# ================= UI =================
+# ================= UI FIXED =================
 st.markdown("""
 <style>
-html, body, [data-testid="stApp"] {background-color:#000;color:#f8fafc;}
-[data-testid="stSidebar"] {background-color:#020617;}
-.card {background:#0f172a;border-radius:18px;padding:20px;margin-bottom:20px;}
-.metric {font-size:34px;font-weight:900;color:#22c55e;}
+html, body, [data-testid="stApp"] {
+    background-color:#000;
+    color:#f8fafc;
+}
+
+[data-testid="stSidebar"] {
+    background-color:#020617;
+}
+
+.card {
+    background:#0f172a;
+    border-radius:18px;
+    padding:20px;
+    margin-bottom:20px;
+    box-shadow:0 0 15px rgba(99,102,241,0.2);
+}
+
+.metric {
+    font-size:34px;
+    font-weight:900;
+    color:#22c55e;
+}
+
+.stButton>button {
+    background:linear-gradient(90deg,#6366f1,#8b5cf6);
+    color:white;
+    border-radius:10px;
+    padding:8px 12px;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("## 🎧 Accent Coach")
+st.caption("Listen • Speak • Analyze • Improve")
 
 # ================= LOAD =================
 @st.cache_resource
@@ -91,10 +117,12 @@ sentence, audio_file = st.session_state.sentence_data
 
 st.markdown("<div class='card'>", unsafe_allow_html=True)
 
-c1, c2 = st.columns([8,1])
-with c1:
+col1, col2 = st.columns([8,1])
+
+with col1:
     st.subheader("📘 Practice Sentence")
-with c2:
+
+with col2:
     if st.button("🔄 New"):
         st.session_state.sentence_data = get_random_sentence(target_accent)
         st.rerun()
@@ -121,7 +149,7 @@ with col2:
 
     if mode == "Microphone":
 
-        # LOCAL
+        # ===== LOCAL =====
         if LOCAL_MIC:
             if st.button("🎤 Record (5 sec)"):
                 fs = 16000
@@ -134,13 +162,18 @@ with col2:
                 st.session_state.audio = temp.name
                 st.success("Recorded")
 
-        # CLOUD
+        # ===== CLOUD =====
         else:
             st.info("🎤 Using browser microphone")
+
+            rtc_config = RTCConfiguration({
+                "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+            })
 
             webrtc_ctx = webrtc_streamer(
                 key="webrtc_audio",
                 mode=WebRtcMode.SENDONLY,
+                rtc_configuration=rtc_config,
                 media_stream_constraints={"audio": True, "video": False},
             )
 
@@ -167,7 +200,7 @@ with col2:
                     st.session_state.audio = temp.name
                     st.success("Recorded (browser)")
                 else:
-                    st.warning("No audio captured. Please try again.")
+                    st.warning("No audio captured. Speak and try again.")
 
     else:
         file = st.file_uploader("Upload WAV", type=["wav"])
@@ -180,9 +213,7 @@ with col2:
 st.markdown("</div>", unsafe_allow_html=True)
 
 # ================= ANALYSIS =================
-analyze_btn = st.button("🚀 Analyze")
-
-if st.session_state.audio and analyze_btn:
+if st.button("🚀 Analyze") and st.session_state.audio:
 
     if is_audio_too_quiet(st.session_state.audio):
         st.warning("🔊 Please speak louder.")
@@ -195,6 +226,7 @@ if st.session_state.audio and analyze_btn:
     result = whisper_model.transcribe(audio)
 
     spoken = result["text"].lower().strip()
+
     similarity = fuzz.ratio(sentence.lower(), spoken)
 
     if similarity < 80:
@@ -211,7 +243,7 @@ if st.session_state.audio and analyze_btn:
 
     st.markdown(f"<div class='metric'>{probs[idx]:.1f}%</div>", unsafe_allow_html=True)
 
-    fig, ax = plt.subplots(figsize=(2.4, 1.6))
+    fig, ax = plt.subplots()
     bars = ax.bar(label_encoder.classes_, probs)
     bars[idx].set_color("#22c55e")
     ax.set_ylim(0, 100)
