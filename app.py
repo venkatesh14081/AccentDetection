@@ -9,6 +9,7 @@ from fuzzywuzzy import fuzz
 import os
 import torch
 import soundfile as sf
+import librosa
 
 from sentences import get_random_sentence
 from accent_predictor import extract_features
@@ -24,21 +25,23 @@ except:
 # ===== WEBRTC =====
 try:
     from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
-    WEBRTC = True
 except:
-    WEBRTC = False
+    pass
 
 torch.set_num_threads(1)
 
-# ================= AUDIO PREPROCESS (IMPORTANT FIX) =================
+# ================= SAFE AUDIO LOADER =================
 def prepare_audio(path):
-    audio, sr = sf.read(path)
+    try:
+        audio, sr = sf.read(path)
+    except:
+        audio, sr = librosa.load(path, sr=16000)
 
-    # convert stereo → mono
+    # mono
     if len(audio.shape) > 1:
         audio = audio.mean(axis=1)
 
-    # convert to float32
+    # float32
     audio = audio.astype(np.float32)
 
     # normalize
@@ -63,15 +66,14 @@ if "sentence_data" not in st.session_state:
 if "accent" not in st.session_state:
     st.session_state.accent = None
 
-st.set_page_config(page_title="Accent Coach", page_icon="🎧", layout="wide")
+st.set_page_config(page_title="Accent Coach", layout="wide")
 
 # ================= UI =================
 st.markdown("""
 <style>
-html, body {background:#000;color:#fff;}
+html,body {background:#000;color:#fff;}
 .card {background:#0f172a;padding:20px;border-radius:15px;margin-bottom:20px;}
-.metric {font-size:34px;font-weight:bold;color:#22c55e;}
-.stButton>button {background:#6366f1;color:white;border-radius:8px;}
+.metric {font-size:34px;color:#22c55e;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -132,8 +134,11 @@ if mode == "Microphone":
             rec = sd.rec(int(5 * fs), samplerate=fs, channels=1)
             sd.wait()
 
+            audio = rec.squeeze()
+            audio = np.clip(audio, -1, 1)
+
             temp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
-            write(temp.name, fs, rec.squeeze())
+            write(temp.name, fs, (audio * 32767).astype(np.int16))
 
             st.session_state.audio = temp.name
             st.success("Recorded")
@@ -153,9 +158,9 @@ if mode == "Microphone":
         if st.button("Stop & Save"):
             frames = []
 
-            if webrtc_ctx.audio_receiver:
+            if webrtc_ctx and webrtc_ctx.audio_receiver:
                 try:
-                    for _ in range(300):
+                    for _ in range(400):
                         frame = webrtc_ctx.audio_receiver.get_frame(timeout=2)
                         if frame is None:
                             break
@@ -164,15 +169,18 @@ if mode == "Microphone":
                     pass
 
             if frames:
-                audio = np.concatenate(frames, axis=0).astype(np.float32)
+                audio = np.concatenate(frames, axis=0)
+                audio = audio.astype(np.float32)
+
+                audio = np.clip(audio, -1, 1)
 
                 temp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
-                write(temp.name, 16000, audio)
+                write(temp.name, 16000, (audio * 32767).astype(np.int16))
 
                 st.session_state.audio = temp.name
                 st.success("Recorded (browser)")
             else:
-                st.warning("No audio captured. Speak and try again.")
+                st.warning("No audio captured. Try again.")
 
 else:
     file = st.file_uploader("Upload WAV", type=["wav"])
@@ -184,6 +192,10 @@ else:
 
 # ================= ANALYSIS =================
 if st.button("Analyze") and st.session_state.audio:
+
+    if not os.path.exists(st.session_state.audio):
+        st.error("Audio file missing. Try again.")
+        st.stop()
 
     if is_audio_too_quiet(st.session_state.audio):
         st.warning("Speak louder")
