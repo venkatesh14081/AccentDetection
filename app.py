@@ -8,7 +8,7 @@ import whisper
 from fuzzywuzzy import fuzz
 import os
 import torch
-import soundfile as sf  # NEW
+import soundfile as sf
 
 from sentences import get_random_sentence
 from accent_predictor import extract_features
@@ -21,7 +21,7 @@ try:
 except:
     LOCAL_MIC = False
 
-# ===== WEBRTC IMPORT =====
+# ===== WEBRTC =====
 try:
     from streamlit_webrtc import webrtc_streamer, WebRtcMode
     WEBRTC = True
@@ -30,7 +30,7 @@ except:
 
 torch.set_num_threads(1)
 
-# ================= SILENCE CHECK (FIXED) =================
+# ================= SILENCE CHECK =================
 def is_audio_too_quiet(audio_path, threshold=0.01):
     try:
         y, sr = sf.read(audio_path)
@@ -41,7 +41,7 @@ def is_audio_too_quiet(audio_path, threshold=0.01):
     except:
         return False
 
-# ================= SESSION STATE =================
+# ================= SESSION =================
 if "audio" not in st.session_state:
     st.session_state.audio = None
 if "sentence_data" not in st.session_state:
@@ -49,53 +49,22 @@ if "sentence_data" not in st.session_state:
 if "accent" not in st.session_state:
     st.session_state.accent = None
 
-# ================= PAGE CONFIG =================
+# ================= CONFIG =================
 st.set_page_config(page_title="Accent Coach", page_icon="🎧", layout="wide")
 
-# ================= UI (UNCHANGED) =================
+# ================= UI =================
 st.markdown("""
 <style>
-html, body, [data-testid="stApp"] {
-    background-color: #000000;
-    color: #f8fafc;
-}
-[data-testid="stSidebar"] {
-    background-color: #020617;
-}
-.card {
-    background: #0f172a;
-    border-radius: 18px;
-    padding: 20px;
-    margin-bottom: 20px;
-    box-shadow: 0 0 18px rgba(99,102,241,0.18);
-}
-h1, h2 { color: #38bdf8 !important; }
-h3 { color: #f472b6 !important; }
-p, span, label { color: #e5e7eb !important; }
-
-.metric {
-    font-size: 34px;
-    font-weight: 900;
-    color: #22c55e;
-}
-
-.stButton>button {
-    background: linear-gradient(90deg,#6366f1,#8b5cf6);
-    color: white;
-    border-radius: 12px;
-    border: none;
-}
-
-.small-text {
-    color: #cbd5f5;
-}
+html, body, [data-testid="stApp"] {background-color:#000;color:#f8fafc;}
+[data-testid="stSidebar"] {background-color:#020617;}
+.card {background:#0f172a;border-radius:18px;padding:20px;margin-bottom:20px;}
+.metric {font-size:34px;font-weight:900;color:#22c55e;}
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("## 🎧 Accent Coach")
-st.markdown("<div class='small-text'>Listen • Speak • Analyze • Improve</div>", unsafe_allow_html=True)
 
-# ================= LOAD MODELS =================
+# ================= LOAD =================
 @st.cache_resource
 def load_models():
     clf = joblib.load("model/accent_classifier.pkl")
@@ -133,13 +102,13 @@ with c2:
 st.info(sentence)
 
 if audio_file:
-    ref_path = f"reference_audio/{target_accent}/{audio_file}"
-    if os.path.exists(ref_path):
-        st.audio(ref_path)
+    path = f"reference_audio/{target_accent}/{audio_file}"
+    if os.path.exists(path):
+        st.audio(path)
 
 st.markdown("</div>", unsafe_allow_html=True)
 
-# ================= AUDIO INPUT =================
+# ================= INPUT =================
 st.markdown("<div class='card'>", unsafe_allow_html=True)
 st.subheader("🎙️ Your Voice")
 
@@ -158,8 +127,10 @@ with col2:
                 fs = 16000
                 rec = sd.rec(int(5 * fs), samplerate=fs, channels=1)
                 sd.wait()
+
                 temp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
                 write(temp.name, fs, rec.squeeze())
+
                 st.session_state.audio = temp.name
                 st.success("Recorded")
 
@@ -168,26 +139,35 @@ with col2:
             st.info("🎤 Using browser microphone")
 
             webrtc_ctx = webrtc_streamer(
-                key="webrtc_audio",  # FIXED
+                key="webrtc_audio",
                 mode=WebRtcMode.SENDONLY,
                 media_stream_constraints={"audio": True, "video": False},
             )
 
             if st.button("Stop & Save"):
-                if webrtc_ctx.audio_receiver:
-                    frames = []
-                    for _ in range(200):
-                        frame = webrtc_ctx.audio_receiver.get_frame(timeout=1)
-                        if frame is None:
-                            break
-                        frames.append(frame.to_ndarray())
 
-                    if frames:
-                        audio = np.concatenate(frames, axis=0)
-                        temp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
-                        write(temp.name, 16000, audio.astype(np.float32))
-                        st.session_state.audio = temp.name
-                        st.success("Recorded (browser)")
+                frames = []
+
+                if webrtc_ctx.audio_receiver:
+                    try:
+                        while True:
+                            frame = webrtc_ctx.audio_receiver.get_frame(timeout=1)
+                            if frame is None:
+                                break
+                            frames.append(frame.to_ndarray())
+                    except:
+                        pass
+
+                if frames:
+                    audio = np.concatenate(frames, axis=0)
+
+                    temp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+                    write(temp.name, 16000, audio.astype(np.float32))
+
+                    st.session_state.audio = temp.name
+                    st.success("Recorded (browser)")
+                else:
+                    st.warning("No audio captured. Please try again.")
 
     else:
         file = st.file_uploader("Upload WAV", type=["wav"])
@@ -208,7 +188,6 @@ if st.session_state.audio and analyze_btn:
         st.warning("🔊 Please speak louder.")
         st.stop()
 
-    # FIXED WHISPER (NO FFMPEG)
     audio, sr = sf.read(st.session_state.audio)
     if len(audio.shape) > 1:
         audio = audio[:, 0]
