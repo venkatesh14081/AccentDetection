@@ -26,7 +26,7 @@ from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
 
 torch.set_num_threads(1)
 
-# ================= AUDIO =================
+# ================= AUDIO PREP =================
 def prepare_audio(path):
     try:
         audio, sr = sf.read(path)
@@ -38,14 +38,17 @@ def prepare_audio(path):
 
     audio = audio.astype(np.float32)
 
+    # resample safely
     if sr != 16000:
         audio = librosa.resample(audio, orig_sr=sr, target_sr=16000)
 
+    # normalize
     if np.max(np.abs(audio)) > 0:
         audio = audio / np.max(np.abs(audio))
 
     audio = np.nan_to_num(audio)
 
+    # ensure min length
     if len(audio) < 16000:
         audio = np.pad(audio, (0, 16000 - len(audio)))
 
@@ -77,7 +80,7 @@ st.title("🎧 Accent Coach")
 def load_models():
     clf = joblib.load("model/accent_classifier.pkl")
     le = joblib.load("model/label_encoder.pkl")
-    whisper_model = whisper.load_model("tiny")
+    whisper_model = whisper.load_model("tiny")   # fast model
     return clf, le, whisper_model
 
 classifier, label_encoder, whisper_model = load_models()
@@ -161,22 +164,20 @@ if mode == "Microphone":
                     pass
 
             if len(frames) < 20:
-                st.warning("No proper audio captured. Speak clearly.")
+                st.warning("Speak clearly and try again")
                 st.stop()
 
             audio = np.concatenate(frames, axis=0)
 
-            # convert to mono
             if audio.ndim > 1:
                 audio = audio.mean(axis=1)
 
             audio = audio.astype(np.float32)
 
-            # normalize
             if np.max(np.abs(audio)) > 0:
                 audio = audio / np.max(np.abs(audio))
 
-            # 🔥 FIX: correct resampling
+            # 🔥 FIX: safe resample
             audio = librosa.resample(audio, orig_sr=48000, target_sr=16000)
 
             temp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
@@ -202,6 +203,7 @@ if st.button("Analyze") and st.session_state.audio:
         audio,
         language="en",
         temperature=0,
+        best_of=1,
         fp16=False
     )
 
@@ -211,7 +213,7 @@ if st.button("Analyze") and st.session_state.audio:
 
     similarity = fuzz.token_set_ratio(sentence.lower(), spoken)
 
-    if similarity < 50:
+    if similarity < 45:
         st.error("Sentence mismatch")
         st.write("Detected:", spoken)
         st.stop()
