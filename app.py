@@ -23,14 +23,11 @@ except:
     LOCAL_MIC = False
 
 # ===== WEBRTC =====
-try:
-    from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
-except:
-    pass
+from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
 
 torch.set_num_threads(1)
 
-# ================= SAFE AUDIO LOADER =================
+# ================= FINAL AUDIO FIX =================
 def prepare_audio(path):
     try:
         audio, sr = sf.read(path)
@@ -38,15 +35,25 @@ def prepare_audio(path):
         audio, sr = librosa.load(path, sr=16000)
 
     # mono
-    if len(audio.shape) > 1:
+    if audio.ndim > 1:
         audio = audio.mean(axis=1)
 
-    # float32
     audio = audio.astype(np.float32)
+
+    # resample to 16k
+    if sr != 16000:
+        audio = librosa.resample(audio, orig_sr=sr, target_sr=16000)
 
     # normalize
     if np.max(np.abs(audio)) > 0:
         audio = audio / np.max(np.abs(audio))
+
+    # remove NaN
+    audio = np.nan_to_num(audio)
+
+    # ensure minimum length (1 sec)
+    if len(audio) < 16000:
+        audio = np.pad(audio, (0, 16000 - len(audio)))
 
     return audio
 
@@ -158,7 +165,7 @@ if mode == "Microphone":
         if st.button("Stop & Save"):
             frames = []
 
-            if webrtc_ctx and webrtc_ctx.audio_receiver:
+            if webrtc_ctx.audio_receiver:
                 try:
                     for _ in range(400):
                         frame = webrtc_ctx.audio_receiver.get_frame(timeout=2)
@@ -170,8 +177,6 @@ if mode == "Microphone":
 
             if frames:
                 audio = np.concatenate(frames, axis=0)
-                audio = audio.astype(np.float32)
-
                 audio = np.clip(audio, -1, 1)
 
                 temp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
@@ -180,7 +185,7 @@ if mode == "Microphone":
                 st.session_state.audio = temp.name
                 st.success("Recorded (browser)")
             else:
-                st.warning("No audio captured. Try again.")
+                st.warning("No audio captured")
 
 else:
     file = st.file_uploader("Upload WAV", type=["wav"])
@@ -194,7 +199,7 @@ else:
 if st.button("Analyze") and st.session_state.audio:
 
     if not os.path.exists(st.session_state.audio):
-        st.error("Audio file missing. Try again.")
+        st.error("Audio missing")
         st.stop()
 
     if is_audio_too_quiet(st.session_state.audio):
@@ -203,7 +208,15 @@ if st.button("Analyze") and st.session_state.audio:
 
     audio = prepare_audio(st.session_state.audio)
 
-    result = whisper_model.transcribe(audio)
+    if len(audio) < 1000:
+        st.error("Audio too short")
+        st.stop()
+
+    try:
+        result = whisper_model.transcribe(audio)
+    except:
+        st.error("Audio processing failed. Try again.")
+        st.stop()
 
     spoken = result["text"].lower().strip()
 
