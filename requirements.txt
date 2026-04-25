@@ -1,6 +1,5 @@
 streamlit
 streamlit-webrtc
-sounddevice
 numpy
 scipy
 matplotlib
