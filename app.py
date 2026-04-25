@@ -14,7 +14,7 @@ from sentences import get_random_sentence
 from accent_predictor import extract_features
 from pronunciation_feedback import pronunciation_feedback
 
-# ===== FIX (ONLY CHANGE) =====
+# ===== SAFE IMPORT =====
 try:
     import sounddevice as sd
     LOCAL_MIC = True
@@ -33,10 +33,9 @@ torch.set_num_threads(1)
 # ================= SILENCE CHECK =================
 def is_audio_too_quiet(audio_path, threshold=0.01):
     y, _ = librosa.load(audio_path, sr=16000, res_type="kaiser_fast")
-    rms = np.sqrt(np.mean(y**2))
-    return rms < threshold
+    return np.sqrt(np.mean(y**2)) < threshold
 
-# ================= SESSION STATE =================
+# ================= SESSION =================
 if "audio" not in st.session_state:
     st.session_state.audio = None
 if "sentence_data" not in st.session_state:
@@ -44,18 +43,23 @@ if "sentence_data" not in st.session_state:
 if "accent" not in st.session_state:
     st.session_state.accent = None
 
-# ================= PAGE CONFIG =================
-st.set_page_config(
-    page_title="Accent Coach",
-    page_icon="🎧",
-    layout="wide"
-)
+# ================= CONFIG =================
+st.set_page_config(page_title="Accent Coach", page_icon="🎧", layout="wide")
 
 # ================= UI (UNCHANGED) =================
-st.markdown("""<style>
-html, body, [data-testid="stApp"] {background-color:#000;color:#f8fafc;}
-.metric {font-size:34px;font-weight:900;color:#22c55e;}
-</style>""", unsafe_allow_html=True)
+st.markdown("""
+<style>
+html, body, [data-testid="stApp"] {
+    background-color: #000000;
+    color: #f8fafc;
+}
+.metric {
+    font-size: 34px;
+    font-weight: 900;
+    color: #22c55e;
+}
+</style>
+""", unsafe_allow_html=True)
 
 st.markdown("## 🎧 Accent Coach")
 
@@ -84,16 +88,17 @@ sentence, audio_file = st.session_state.sentence_data
 st.info(sentence)
 
 if audio_file:
-    ref_path = f"reference_audio/{target_accent}/{audio_file}"
-    if os.path.exists(ref_path):
-        st.audio(ref_path)
+    path = f"reference_audio/{target_accent}/{audio_file}"
+    if os.path.exists(path):
+        st.audio(path)
 
 # ================= INPUT =================
 mode = st.radio("Input Method", ["Microphone", "Upload WAV"])
 
+# ===== MICROPHONE =====
 if mode == "Microphone":
 
-    # ===== LOCAL =====
+    # LOCAL
     if LOCAL_MIC:
         if st.button("🎤 Record (5 sec)"):
             fs = 16000
@@ -101,17 +106,17 @@ if mode == "Microphone":
             sd.wait()
 
             temp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
-            write(temp.name, fs, rec.squeeze())
+            write(temp.name, fs, rec.squeeze())   # FIXED
 
             st.session_state.audio = temp.name
             st.success("Recorded")
 
-    # ===== CLOUD =====
+    # CLOUD
     else:
         st.info("🎤 Using browser microphone")
 
         webrtc_ctx = webrtc_streamer(
-            key="webrtc_audio",
+            key="webrtc_audio",   # FIXED KEY
             mode=WebRtcMode.SENDONLY,
             media_stream_constraints={"audio": True, "video": False},
         )
@@ -135,6 +140,7 @@ if mode == "Microphone":
                     st.session_state.audio = temp.name
                     st.success("Recorded (browser)")
 
+# ===== UPLOAD =====
 else:
     file = st.file_uploader("Upload WAV", type=["wav"])
     if file:
@@ -152,14 +158,17 @@ if st.session_state.audio and analyze:
         st.warning("Audio too quiet")
         st.stop()
 
-    result = whisper_model.transcribe(st.session_state.audio)
+    # ===== FIXED WHISPER =====
+    audio, sr = librosa.load(st.session_state.audio, sr=16000)
+    result = whisper_model.transcribe(audio)
+
     spoken = result["text"].lower().strip()
 
     similarity = fuzz.ratio(sentence.lower(), spoken)
 
     if similarity < 80:
         st.error("Sentence mismatch")
-        st.write("Detected:", spoken)
+        st.write(spoken)
         st.stop()
 
     st.success(f"Sentence Accuracy: {similarity:.1f}%")
@@ -174,8 +183,8 @@ if st.session_state.audio and analyze:
     fig, ax = plt.subplots(figsize=(2.5, 1.5))
     bars = ax.bar(label_encoder.classes_, probs)
     bars[idx].set_color("green")
-
     ax.set_ylim(0, 100)
+
     st.pyplot(fig)
 
     for tip in pronunciation_feedback(target_accent, spoken, sentence):
