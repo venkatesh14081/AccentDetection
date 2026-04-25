@@ -51,13 +51,6 @@ def prepare_audio(path):
 
     return audio
 
-def is_audio_too_quiet(path):
-    try:
-        audio = prepare_audio(path)
-        return np.sqrt(np.mean(audio**2)) < 0.01
-    except:
-        return False
-
 # ================= SESSION =================
 if "audio" not in st.session_state:
     st.session_state.audio = None
@@ -68,6 +61,7 @@ if "accent" not in st.session_state:
 
 st.set_page_config(page_title="Accent Coach", layout="wide")
 
+# ================= UI =================
 st.markdown("""
 <style>
 html,body {background:#000;color:#fff;}
@@ -158,7 +152,7 @@ if mode == "Microphone":
 
             if webrtc_ctx and webrtc_ctx.audio_receiver:
                 try:
-                    for _ in range(500):
+                    for _ in range(600):
                         frame = webrtc_ctx.audio_receiver.get_frame(timeout=2)
                         if frame is None:
                             break
@@ -166,19 +160,24 @@ if mode == "Microphone":
                 except:
                     pass
 
-            if len(frames) < 10:
+            if len(frames) < 20:
                 st.warning("No proper audio captured. Speak clearly.")
                 st.stop()
 
             audio = np.concatenate(frames, axis=0)
 
+            # convert to mono
             if audio.ndim > 1:
                 audio = audio.mean(axis=1)
 
             audio = audio.astype(np.float32)
 
+            # normalize
             if np.max(np.abs(audio)) > 0:
                 audio = audio / np.max(np.abs(audio))
+
+            # 🔥 FIX: correct resampling
+            audio = librosa.resample(audio, orig_sr=48000, target_sr=16000)
 
             temp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
             write(temp.name, 16000, (audio * 32767).astype(np.int16))
@@ -210,10 +209,11 @@ if st.button("Analyze") and st.session_state.audio:
 
     st.write("You said:", spoken)
 
-    similarity = fuzz.partial_ratio(sentence.lower(), spoken)
+    similarity = fuzz.token_set_ratio(sentence.lower(), spoken)
 
-    if similarity < 60:
+    if similarity < 50:
         st.error("Sentence mismatch")
+        st.write("Detected:", spoken)
         st.stop()
 
     st.success(f"Accuracy: {similarity:.1f}%")
