@@ -111,7 +111,7 @@ if mode == "Microphone":
         st.info("🎤 Using browser microphone")
 
         webrtc_ctx = webrtc_streamer(
-            key="audio",
+            key="webrtc_audio",
             mode=WebRtcMode.SENDONLY,
             media_stream_constraints={"audio": True, "video": False},
         )
