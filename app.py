@@ -22,42 +22,35 @@ try:
 except:
     LOCAL_MIC = False
 
-# ===== WEBRTC =====
 from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
 
 torch.set_num_threads(1)
 
-# ================= FINAL AUDIO FIX =================
+# ================= AUDIO =================
 def prepare_audio(path):
     try:
         audio, sr = sf.read(path)
     except:
         audio, sr = librosa.load(path, sr=16000)
 
-    # mono
     if audio.ndim > 1:
         audio = audio.mean(axis=1)
 
     audio = audio.astype(np.float32)
 
-    # resample to 16k
     if sr != 16000:
         audio = librosa.resample(audio, orig_sr=sr, target_sr=16000)
 
-    # normalize
     if np.max(np.abs(audio)) > 0:
         audio = audio / np.max(np.abs(audio))
 
-    # remove NaN
     audio = np.nan_to_num(audio)
 
-    # ensure minimum length (1 sec)
     if len(audio) < 16000:
         audio = np.pad(audio, (0, 16000 - len(audio)))
 
     return audio
 
-# ================= SILENCE CHECK =================
 def is_audio_too_quiet(path):
     try:
         audio = prepare_audio(path)
@@ -75,7 +68,6 @@ if "accent" not in st.session_state:
 
 st.set_page_config(page_title="Accent Coach", layout="wide")
 
-# ================= UI =================
 st.markdown("""
 <style>
 html,body {background:#000;color:#fff;}
@@ -112,10 +104,8 @@ sentence, audio_file = st.session_state.sentence_data
 st.markdown("<div class='card'>", unsafe_allow_html=True)
 
 c1, c2 = st.columns([8,1])
-
 with c1:
     st.subheader("Practice Sentence")
-
 with c2:
     if st.button("New"):
         st.session_state.sentence_data = get_random_sentence(target_accent)
@@ -163,11 +153,12 @@ if mode == "Microphone":
         )
 
         if st.button("Stop & Save"):
+
             frames = []
 
-            if webrtc_ctx.audio_receiver:
+            if webrtc_ctx and webrtc_ctx.audio_receiver:
                 try:
-                    for _ in range(400):
+                    for _ in range(500):
                         frame = webrtc_ctx.audio_receiver.get_frame(timeout=2)
                         if frame is None:
                             break
@@ -175,17 +166,25 @@ if mode == "Microphone":
                 except:
                     pass
 
-            if frames:
-                audio = np.concatenate(frames, axis=0)
-                audio = np.clip(audio, -1, 1)
+            if len(frames) < 10:
+                st.warning("No proper audio captured. Speak clearly.")
+                st.stop()
 
-                temp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
-                write(temp.name, 16000, (audio * 32767).astype(np.int16))
+            audio = np.concatenate(frames, axis=0)
 
-                st.session_state.audio = temp.name
-                st.success("Recorded (browser)")
-            else:
-                st.warning("No audio captured")
+            if audio.ndim > 1:
+                audio = audio.mean(axis=1)
+
+            audio = audio.astype(np.float32)
+
+            if np.max(np.abs(audio)) > 0:
+                audio = audio / np.max(np.abs(audio))
+
+            temp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+            write(temp.name, 16000, (audio * 32767).astype(np.int16))
+
+            st.session_state.audio = temp.name
+            st.success("Recorded (browser)")
 
 else:
     file = st.file_uploader("Upload WAV", type=["wav"])
@@ -198,33 +197,23 @@ else:
 # ================= ANALYSIS =================
 if st.button("Analyze") and st.session_state.audio:
 
-    if not os.path.exists(st.session_state.audio):
-        st.error("Audio missing")
-        st.stop()
-
-    if is_audio_too_quiet(st.session_state.audio):
-        st.warning("Speak louder")
-        st.stop()
-
     audio = prepare_audio(st.session_state.audio)
 
-    if len(audio) < 1000:
-        st.error("Audio too short")
-        st.stop()
-
-    try:
-        result = whisper_model.transcribe(audio)
-    except:
-        st.error("Audio processing failed. Try again.")
-        st.stop()
+    result = whisper_model.transcribe(
+        audio,
+        language="en",
+        temperature=0,
+        fp16=False
+    )
 
     spoken = result["text"].lower().strip()
 
-    similarity = fuzz.ratio(sentence.lower(), spoken)
+    st.write("You said:", spoken)
 
-    if similarity < 80:
+    similarity = fuzz.partial_ratio(sentence.lower(), spoken)
+
+    if similarity < 60:
         st.error("Sentence mismatch")
-        st.write(spoken)
         st.stop()
 
     st.success(f"Accuracy: {similarity:.1f}%")
